@@ -6,7 +6,7 @@ HENkaku:
   main:
     start: module_start
     stop: module_stop
-  modules:
+  libraries:
     HENkaku:
       syscall: true
       functions:

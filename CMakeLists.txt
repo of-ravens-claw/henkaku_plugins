@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.5)
 
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
   if(DEFINED ENV{VITASDK})
@@ -35,8 +35,8 @@ function(ADD_RESOURCES out_var)
     add_custom_command(OUTPUT ${out_f}
       COMMAND ${CMAKE_COMMAND} -E make_directory ${out_dir}
       COMMAND ${CMAKE_LINKER} -r -b binary -o ${out_f} ${in_f}
-      DEPENDS ${in_f}
-      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      DEPENDS ${CMAKE_SOURCE_DIR}/src/user/${in_f}
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/src/user
       COMMENT "Building resource ${out_f}"
       VERBATIM
       )
@@ -45,7 +45,7 @@ function(ADD_RESOURCES out_var)
   set(${out_var} "${result}" PARENT_SCOPE)
 endfunction()
 
-file(GLOB res_files RELATIVE ${CMAKE_SOURCE_DIR}/src/user/ *.xml)
+file(GLOB res_files RELATIVE ${CMAKE_SOURCE_DIR}/src/user ${CMAKE_SOURCE_DIR}/src/user/*.xml)
 add_resources(xml_res ${res_files})
 
 add_executable(user
@@ -90,7 +90,7 @@ set_target_properties(user
 
 vita_create_self(henkaku.skprx kernel
   UNSAFE
-  CONFIG ${CMAKE_SOURCE_DIR}/kernel.yml
+  CONFIG ${CMAKE_SOURCE_DIR}/src/kernel/kernel.yml
 )
 vita_create_stubs(henkaku-stubs kernel ${CMAKE_SOURCE_DIR}/src/kernel/kernel.yml
   KERNEL
