@@ -11,7 +11,7 @@ endif()
 project(HENkaku)
 include("${VITASDK}/share/vita.cmake" REQUIRED)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wl,-q -Wall -fshort-wchar -O3 -std=gnu99")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wl,-q -Wall -Wextra -Wno-type-limits -fshort-wchar -O3 -std=gnu99")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fno-rtti -fno-exceptions")
 
 include_directories(
@@ -80,12 +80,12 @@ target_link_libraries(kernel
 add_dependencies(user henkaku-stubs)
 
 set_target_properties(kernel
-  PROPERTIES LINK_FLAGS "-nostdlib"
+  PROPERTIES LINK_FLAGS "-nostdlib --entry=module_start"
   COMPILE_FLAGS "-D__VITA_KERNEL__"
 )
 
 set_target_properties(user
-  PROPERTIES LINK_FLAGS "-nostdlib"
+  PROPERTIES LINK_FLAGS "-nostdlib --entry=module_start"
 )
 
 vita_create_self(henkaku.skprx kernel

@@ -1,6 +1,7 @@
 #include <psp2kern/kernel/modulemgr.h>
 #include <psp2kern/kernel/sysmem.h>
 #include <psp2kern/kernel/cpu.h>
+#include <psp2kern/kernel/debug.h>
 #include <psp2kern/kernel/threadmgr.h>
 #include <psp2kern/io/fcntl.h>
 
@@ -49,14 +50,14 @@ static henkaku_config_t config;
 
 static SceUID g_hooks[6];
 
-static tai_hook_ref_t g_parse_headers_hook;
-static int parse_headers_patched(int ctx, const void* headers, size_t len, void* args)
+static tai_hook_ref_t g_sceSblAuthMgrAuthHeader_hook;
+static int sceSblAuthMgrAuthHeader_patched(int ctx, const void* headers, size_t len, void* args)
 {
 	self_header_t* self;
 	app_info_t* info;
 	int ret;
 
-	ret = TAI_CONTINUE(int, g_parse_headers_hook, ctx, headers, len, args);
+	ret = TAI_CONTINUE(int, g_sceSblAuthMgrAuthHeader_hook, ctx, headers, len, args);
 	if (len >= sizeof(self_header_t) && len >= sizeof(app_info_t))
 	{
 		self = (self_header_t*)headers;
@@ -66,7 +67,11 @@ static int parse_headers_patched(int ctx, const void* headers, size_t len, void*
 			LOG("authid: 0x%llx\n", info->authid);
 			if (ret < 0 && config.allow_unsafe_hb)
 			{
-				LOG("is homebrew!");
+				// Homebrew usually returns 0x800F0624
+				// Games designed for a newer firmware seem to return 0x800F0B37 (sample size of one, so not certain.)
+
+				//LOG("is homebrew!");
+				LOG("maybe homebrew! ret 0x%08X", ret);
 				if ((info->authid & 0xFFFFFFFFFFFFFFFCLL) == 0x2F00000000000000LL)
 				{
 					if (info->authid & 1)
@@ -87,35 +92,35 @@ static int parse_headers_patched(int ctx, const void* headers, size_t len, void*
 	return ret;
 }
 
-static tai_hook_ref_t g_some_sysroot_check_hook;
-static int some_sysroot_check_patched(void)
+static tai_hook_ref_t g_sceKernelSysrootCheckRemapCodeForUser_hook;
+static int sceKernelSysrootCheckRemapCodeForUser_patched(void)
 {
-	TAI_CONTINUE(int, g_some_sysroot_check_hook);
+	TAI_CONTINUE(int, g_sceKernelSysrootCheckRemapCodeForUser_hook);
 	return 1;
 }
 
-static tai_hook_ref_t g_some_process_check_patched_hook;
-static int some_process_check_patched(void)
+static tai_hook_ref_t g_sceKernelCheckOpenVMDomain_hook;
+static int sceKernelCheckOpenVMDomain_patched(void)
 {
-	TAI_CONTINUE(int, g_some_process_check_patched_hook);
+	TAI_CONTINUE(int, g_sceKernelCheckOpenVMDomain_hook);
 	return 0;
 }
 
-static tai_hook_ref_t g_some_power_auth_check_hook;
-static int some_power_auth_check_patched(void)
+static tai_hook_ref_t g_sceSblACMgrIsSystemProgram_hook;
+static int sceSblACMgrIsSystemProgram_patched(void)
 {
 	// this function may be called in the process of looping
 	// see: https://github.com/yifanlu/taiHEN/issues/12
 	// for now, we mark this as a FIXME and do this check manually
-	if (g_some_power_auth_check_hook)
+	if (g_sceSblACMgrIsSystemProgram_hook)
 	{
-		TAI_CONTINUE(int, g_some_power_auth_check_hook);
+		TAI_CONTINUE(int, g_sceSblACMgrIsSystemProgram_hook);
 	}
 	return 1;
 }
 
 static tai_hook_ref_t g_sceKernelGetSystemSwVersion_hook;
-static int sceKernelGetSystemSwVersion_patched(SceKernelFwInfo* info)
+static int sceKernelGetSystemSwVersion_patched(SceKernelSystemSwVersion* info)
 {
 	int ret;
 	int ver_major;
@@ -142,8 +147,11 @@ static int sceSblUsGetSpkgInfo_patched(int r0, uintptr_t out)
 	return ret;
 }
 
-static int load_config_kernel(void)
+static int load_config_kernel(SceSize args, void* argp)
 {
+	UNUSED_PARAM(args);
+	UNUSED_PARAM(argp);
+
 	SceUID fd;
 	int rd;
 	fd = ksceIoOpen(CONFIG_PATH, SCE_O_RDONLY, 0);
@@ -200,7 +208,7 @@ int henkaku_reload_config(void)
 	int tid;
 	int ret;
 	ENTER_SYSCALL(state);
-	tid = ksceKernelCreateThread("configwrite", (SceKernelThreadEntry)load_config_kernel, 64, 0x1000, 0, 0, NULL);
+	tid = ksceKernelCreateThread("configwrite", load_config_kernel, 64, 0x1000, 0, 0, NULL);
 	LOG("ksceKernelCreateThread: %x", tid);
 	ret = ksceKernelStartThread(tid, 0, NULL);
 	LOG("ksceKernelStartThread: %x", ret);
@@ -210,57 +218,62 @@ int henkaku_reload_config(void)
 	return ret;
 }
 
-void _start() __attribute__ ((weak, alias ("module_start")));
-int module_start(SceSize argc, const void* args)
+int module_start(SceSize args, const void* argp)
 {
+	UNUSED_PARAM(args);
+	UNUSED_PARAM(argp);
+
 	SceUID shell_pid;
 	LOG("loading HENkaku config for kernel");
-	load_config_kernel();
+	load_config_kernel(0, NULL);
 
 	// this hook enables extended permissions for unsafe homebrew + blocking unsafe homebrew if requested
 	g_hooks[0] = taiHookFunctionImportForKernel(KERNEL_PID, 
-	                                            &g_parse_headers_hook, 
+	                                            &g_sceSblAuthMgrAuthHeader_hook, 
 	                                            "SceKernelModulemgr", 
 	                                            0x7ABF5135, // SceSblAuthMgrForKernel
-	                                            0xF3411881, 
-	                                            parse_headers_patched);
+	                                            0xF3411881, // sceSblAuthMgrAuthHeaderForKernel
+	                                            sceSblAuthMgrAuthHeader_patched);
 	LOG("parse_headers_hook: %x", g_hooks[0]);
 	
 	// the next two hooks enable dynarec by patching a system check and a process check
 	g_hooks[1] = taiHookFunctionExportForKernel(KERNEL_PID, 
-	                                            &g_some_sysroot_check_hook, 
+	                                            &g_sceKernelSysrootCheckRemapCodeForUser_hook, 
 	                                            "SceSysmem", 
 	                                            0x3691DA45, // SceSysrootForKernel
-	                                            0xF8769E86, 
-	                                            some_sysroot_check_patched);
-	LOG("some_sysroot_check_hook: %x", g_hooks[1]);
+	                                            0xF8769E86, // sceKernelSysrootCheckRemapCodeForUserForKernel
+	                                            sceKernelSysrootCheckRemapCodeForUser_patched);
+	LOG("sceKernelSysrootCheckRemapCodeForUser_hook: %x", g_hooks[1]);
 
+	// TODO: This seems like a bad thing to always hook..?
 	g_hooks[2] = taiHookFunctionExportForKernel(KERNEL_PID, 
-	                                            &g_some_process_check_patched_hook, 
+	                                            &g_sceKernelCheckOpenVMDomain_hook, 
 	                                            "SceSysmem", 
 	                                            0x63A519E5, // SceSysmemForKernel
-	                                            0xD514BB56, 
-	                                            some_process_check_patched);
-	if (g_hooks[2] < 0)
+	                                            0xD514BB56, // sceKernelCheckOpenVMDomainForKernel
+	                                            sceKernelCheckOpenVMDomain_patched);
+	if (g_hooks[2] < 0) // 3.63+
 	{
 		g_hooks[2] = taiHookFunctionExportForKernel(KERNEL_PID, 
-		                                            &g_some_process_check_patched_hook, 
+		                                            &g_sceKernelCheckOpenVMDomain_hook, 
 		                                            "SceSysmem", 
 		                                            0x02451F0F, // SceSysmemForKernel
-		                                            0x4E6D8BC3, 
-		                                            some_process_check_patched);
+		                                            0x4E6D8BC3, // sceKernelCheckOpenVMDomainForKernel
+		                                            sceKernelCheckOpenVMDomain_patched);
 	}
 
-	LOG("some_process_check_patched_hook: %x", g_hooks[2]);
+	LOG("sceKernelCheckOpenVMDomain_patched_hook: %x", g_hooks[2]);
+
+	// TODO: Also seems like a bad idea to hook this...
 	// this hook patches an auth check in ScePower for enabling overclocking in safe homebrew
-	g_some_power_auth_check_hook = 0;
+	g_sceSblACMgrIsSystemProgram_hook = 0;
 	g_hooks[3] = taiHookFunctionImportForKernel(KERNEL_PID, 
-	                                            &g_some_power_auth_check_hook, 
+	                                            &g_sceSblACMgrIsSystemProgram_hook, 
 	                                            "ScePower", 
 	                                            0x9AD8E213, // SceSblACMgrForDriver
-	                                            0x8612B243, 
-	                                            some_power_auth_check_patched);
-	LOG("some_power_auth_check_hook: %x", g_hooks[3]);
+	                                            0x8612B243, // sceSblACMgrIsSystemProgramForDriver
+	                                            sceSblACMgrIsSystemProgram_patched);
+	LOG("sceSblACMgrIsSystemProgram_hook: %x", g_hooks[3]);
 
 	if (config.use_spoofed_version)
 	{
@@ -269,7 +282,7 @@ int module_start(SceSize argc, const void* args)
 		                                            &g_sceKernelGetSystemSwVersion_hook, 
 		                                            "SceKernelModulemgr", 
 		                                            0xD4A60A52, // SceModulemgrForDriver
-		                                            0x5182E212, 
+		                                            0x5182E212, // sceKernelGetSystemSwVersionForDriver
 		                                            sceKernelGetSystemSwVersion_patched);
 		LOG("sceKernelGetSystemSwVersion_hook: %x", g_hooks[4]);
 
@@ -278,7 +291,7 @@ int module_start(SceSize argc, const void* args)
 		                                            &g_sceSblUsGetSpkgInfo_hook, 
 		                                            "SceSblUpdateMgr", 
 		                                            0x31406C49, // SceSblSsUpdateMgr
-		                                            0x8E3EC2E1, 
+		                                            0x8E3EC2E1, // sceSblUsGetSpkgInfoForUser
 		                                            sceSblUsGetSpkgInfo_patched);
 		LOG("sceSblUsGetSpkgInfo_hook: %x", g_hooks[5]);
 	}
@@ -287,9 +300,9 @@ int module_start(SceSize argc, const void* args)
 		LOG("skipping version spoofing");
 	}
 
-	if (argc == 4)
+	if (args == 4)
 	{
-		shell_pid = *(SceUID*)args;
+		shell_pid = *(SceUID*)argp;
 		LOG("loading shell plugins");
 		// normally this would be done automatically by taiHEN
 		// but since our exploit runs AFTER SceShell is loaded, 
@@ -301,12 +314,15 @@ int module_start(SceSize argc, const void* args)
 	return SCE_KERNEL_START_SUCCESS;
 }
 
-int module_stop(SceSize argc, const void* args)
+int module_stop(SceSize args, const void* argp)
 {
-	taiHookReleaseForKernel(g_hooks[0], g_parse_headers_hook);
-	taiHookReleaseForKernel(g_hooks[1], g_some_sysroot_check_hook);
-	taiHookReleaseForKernel(g_hooks[2], g_some_process_check_patched_hook);
-	taiHookReleaseForKernel(g_hooks[3], g_some_power_auth_check_hook);
+	UNUSED_PARAM(args);
+	UNUSED_PARAM(argp);
+	
+	taiHookReleaseForKernel(g_hooks[0], g_sceSblAuthMgrAuthHeader_hook);
+	taiHookReleaseForKernel(g_hooks[1], g_sceKernelSysrootCheckRemapCodeForUser_hook);
+	taiHookReleaseForKernel(g_hooks[2], g_sceKernelCheckOpenVMDomain_hook);
+	taiHookReleaseForKernel(g_hooks[3], g_sceSblACMgrIsSystemProgram_hook);
 
 	if (config.use_spoofed_version)
 	{

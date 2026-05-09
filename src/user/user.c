@@ -11,8 +11,11 @@
 #include "language.h"
 #include "config.h"
 
+#define SCE_ERROR_ERRNO_ENOENT ((int)0x80010002)
+#define SCE_ERROR_ERRNO_EEXIST ((int)0x80010011)
+
 int _vshIoMount(int id, const char* path, int permissions, void* opt);
-int _vshSblGetSystemSwVersion(SceKernelFwInfo* info);
+int _vshSblGetSystemSwVersion(SceKernelSystemSwVersion* info);
 
 extern unsigned char _binary_system_settings_xml_start;
 extern unsigned char _binary_system_settings_xml_size;
@@ -24,26 +27,22 @@ static henkaku_config_t config;
 static SceUID g_hooks[15];
 
 static tai_hook_ref_t g_sceKernelGetSystemSwVersion_SceSettings_hook;
-static int sceKernelGetSystemSwVersion_SceSettings_patched(SceKernelFwInfo* info)
+static int sceKernelGetSystemSwVersion_SceSettings_patched(SceKernelSystemSwVersion* info)
 {
 	int ret;
-	SceKernelFwInfo real_info;
+	SceKernelSystemSwVersion real_info;
 	ret = TAI_CONTINUE(int, g_sceKernelGetSystemSwVersion_SceSettings_hook, info);
-	sceClibMemset(&real_info, 0, sizeof(SceKernelFwInfo));
-	real_info.size = sizeof(SceKernelFwInfo);
+	sceClibMemset(&real_info, 0, sizeof(SceKernelSystemSwVersion));
+	real_info.size = sizeof(SceKernelSystemSwVersion);
 	_vshSblGetSystemSwVersion(&real_info);
+	
 	if (BETA_RELEASE)
-	{
 		sceClibSnprintf(info->versionString, 16, "%s \xE5\xA4\x89\xE9\x9D\xA9-%d\xCE\xB2%d", real_info.versionString, HENKAKU_RELEASE, BETA_RELEASE);
-	}
 	else if (HENKAKU_RELEASE > 1)
-	{
 		sceClibSnprintf(info->versionString, 16, "%s \xE5\xA4\x89\xE9\x9D\xA9-%d", real_info.versionString, HENKAKU_RELEASE);
-	}
 	else
-	{
 		sceClibSnprintf(info->versionString, 16, "%s \xE5\xA4\x89\xE9\x9D\xA9", real_info.versionString);
-	}
+
 	return ret;
 }
 
@@ -73,10 +72,10 @@ static void passphrase_decrypt_patched(void* dat0, void* dat1, void* dat2, char*
 	}
 }
 
-static tai_hook_ref_t g_SceVshBridge_333875AB_SceShell_hook;
-static int SceVshBridge_333875AB_SceShell_patched(void)
+static tai_hook_ref_t g_vshNpDrmIsLooseAccountBind_SceShell_hook;
+static int vshNpDrmIsLooseAccountBind_SceShell_patched(void)
 {
-	TAI_CONTINUE(int, g_SceVshBridge_333875AB_SceShell_hook);
+	TAI_CONTINUE(int, g_vshNpDrmIsLooseAccountBind_SceShell_hook);
 	return 1;
 }
 
@@ -335,14 +334,14 @@ static int OnButtonEventIduSettings_patched(const char* id, int a2, void* a3)
 		sceClibMemset(buf, 0, sizeof(buf));
 		if ((ret = _vshIoMount(0x800, NULL, 2, buf)) < 0)
 		{
-			if (ret != 0x80010011) // SCE_ERROR_ERRNO_EEXIST (already mounted)
+			if (ret != SCE_ERROR_ERRNO_EEXIST) // already mounted
 			{
 				return ret;
 			}
 		}
 		if ((ret = sceIoRemove("ux0:id.dat")) < 0)
 		{
-			if (ret != 0x80010002) // SCE_ERROR_ERRNO_ENOENT (no entry)
+			if (ret != SCE_ERROR_ERRNO_ENOENT) // no entry
 			{
 				return ret;
 			}
@@ -446,6 +445,7 @@ static wchar_t* scePafToplevelGetText_SceSystemSettingsCore_patched(void* arg, c
 
 		#undef LANGUAGE_ENTRY
 	}
+
 	return TAI_CONTINUE(wchar_t*, g_scePafToplevelGetText_SceSystemSettingsCore_hook, arg, msg);
 }
 
@@ -457,54 +457,56 @@ static SceUID sceKernelLoadStartModule_SceSettings_patched(char* path, SceSize a
 	if (ret >= 0 && sceClibStrncmp(path, "vs0:app/NPXS10015/system_settings_core.suprx", 44) == 0)
 	{
 		g_system_settings_core_modid = ret;
+
 		g_hooks[7] = taiHookFunctionImport(&g_scePafToplevelInitPluginFunctions_SceSettings_hook, 
 		                                   "SceSettings", 
 		                                   0x4D9A9DD0, // ScePafToplevel
-		                                   0xF5354FEF, 
+		                                   0xF5354FEF, // _ZN3paf6Plugin12SetInterfaceEiPv (paf::Plugin::SetInterface(int, void*))
 		                                   scePafToplevelInitPluginFunctions_SceSettings_patched);
 
 		g_hooks[8] = taiHookFunctionImport(&g_scePafMiscLoadXmlLayout_SceSettings_hook, 
 		                                   "SceSettings", 
 		                                   0x3D643CE8, // ScePafMisc
-		                                   0x19FE55A8, 
+		                                   0x19FE55A8, // _ZN3paf7MemFile4OpenEPKvjPi (paf::MemFile::Open(void const*, unsigned int, int*))
 		                                   scePafMiscLoadXmlLayout_SceSettings_patched);
 
 		g_hooks[9] = taiHookFunctionImport(&g_sceRegMgrGetKeyInt_SceSystemSettingsCore_hook, 
 		                                   "SceSystemSettingsCore", 
 		                                   0xC436F916, // SceRegMgr
-		                                   0x16DDF3DC, 
+		                                   0x16DDF3DC, // sceRegMgrGetKeyInt
 		                                   sceRegMgrGetKeyInt_SceSystemSettingsCore_patched);
 
 		g_hooks[10] = taiHookFunctionImport(&g_sceRegMgrSetKeyInt_SceSystemSettingsCore_hook, 
 		                                    "SceSystemSettingsCore", 
 		                                    0xC436F916, // SceRegMgr
-		                                    0xD72EA399, 
+		                                    0xD72EA399, // sceRegMgrSetKeyInt
 		                                    sceRegMgrSetKeyInt_SceSystemSettingsCore_patched);
 
 		g_hooks[11] = taiHookFunctionImport(&g_sceRegMgrGetKeyStr_SceSystemSettingsCore_hook, 
 		                                    "SceSystemSettingsCore", 
 		                                    0xC436F916, // SceRegMgr
-		                                    0xE188382F, 
+		                                    0xE188382F, // sceRegMgrGetKeyStr
 		                                    sceRegMgrGetKeyStr_SceSystemSettingsCore_patched);
 
 		g_hooks[12] = taiHookFunctionImport(&g_sceRegMgrSetKeyStr_SceSystemSettingsCore_hook, 
 		                                    "SceSystemSettingsCore", 
 		                                    0xC436F916, // SceRegMgr
-		                                    0x41D320C5, 
+		                                    0x41D320C5, // sceRegMgrSetKeyStr
 		                                    sceRegMgrSetKeyStr_SceSystemSettingsCore_patched);
 
 		g_hooks[13] = taiHookFunctionImport(&g_sceRegMgrGetKeysInfo_SceSystemSettingsCore_hook, 
 		                                    "SceSystemSettingsCore", 
 		                                    0xC436F916, // SceRegMgr
-		                                    0x58421DD1, 
+		                                    0x58421DD1, // sceRegMgrGetKeysInfo
 		                                    sceRegMgrGetKeysInfo_SceSystemSettingsCore_patched);
 
 		g_hooks[14] = taiHookFunctionImport(&g_scePafToplevelGetText_SceSystemSettingsCore_hook, 
 		                                    "SceSystemSettingsCore", 
 		                                    0x4D9A9DD0, // ScePafToplevel
-		                                    0x19CEFDA7, 
+		                                    0x19CEFDA7, // _ZNK3paf6Plugin9GetStringERKNS_7IDParamE (paf::Plugin::GetString(paf::IDParam const&) const)
 		                                    scePafToplevelGetText_SceSystemSettingsCore_patched);
 	}
+
 	return ret;
 }
 
@@ -524,41 +526,51 @@ static int sceKernelStopUnloadModule_SceSettings_patched(SceUID modid, SceSize a
 		if (g_hooks[13] >= 0) taiHookRelease(g_hooks[13], g_sceRegMgrGetKeysInfo_SceSystemSettingsCore_hook);
 		if (g_hooks[14] >= 0) taiHookRelease(g_hooks[14], g_scePafToplevelGetText_SceSystemSettingsCore_hook);
 	}
+
 	return TAI_CONTINUE(int, g_sceKernelStopUnloadModule_SceSettings_hook, modid, args, argp, flags, option, status);
 }
 
-void _start() __attribute__ ((weak, alias ("module_start")));
-int module_start(SceSize argc, const void* args)
+int module_start(SceSize args, const void* argp)
 {
+	UNUSED_PARAM(args);
+	UNUSED_PARAM(argp);
+
 	tai_module_info_t info;
 	LOG("loading HENkaku config for user");
 	load_config_user();
 
-	g_hooks[0] = taiHookFunctionImport(&g_sceKernelLoadStartModule_SceSettings_hook, 
-	                                   "SceSettings", 
-	                                   0xCAE9ACE6, // SceLibKernel
-	                                   0x2DCC4AFA, 
-	                                   sceKernelLoadStartModule_SceSettings_patched);
-	LOG("sceKernelLoadStartModule hook: %x", g_hooks[0]);
+	sceClibMemset(&info, 0, sizeof(tai_module_info_t));
+	info.size = sizeof(tai_module_info_t);
+	if (taiGetModuleInfo("SceSettings", &info) >= 0)
+	{
+		g_hooks[0] = taiHookFunctionImport(&g_sceKernelLoadStartModule_SceSettings_hook, 
+		                                   "SceSettings", 
+		                                   0xCAE9ACE6, // SceLibKernel
+		                                   0x2DCC4AFA, // sceKernelLoadStartModule
+		                                   sceKernelLoadStartModule_SceSettings_patched);
+		LOG("sceKernelLoadStartModule hook: %x", g_hooks[0]);
 
-	g_hooks[1] = taiHookFunctionImport(&g_sceKernelStopUnloadModule_SceSettings_hook, 
-	                                   "SceSettings", 
-	                                   0xCAE9ACE6, // SceLibKernel
-	                                   0x2415F8A4, 
-	                                   sceKernelStopUnloadModule_SceSettings_patched);
-	LOG("sceKernelStopUnloadModule hook: %x", g_hooks[1]);
+		g_hooks[1] = taiHookFunctionImport(&g_sceKernelStopUnloadModule_SceSettings_hook, 
+		                                   "SceSettings", 
+		                                   0xCAE9ACE6, // SceLibKernel
+		                                   0x2415F8A4, // sceKernelStopUnloadModule
+		                                   sceKernelStopUnloadModule_SceSettings_patched);
+		LOG("sceKernelStopUnloadModule hook: %x", g_hooks[1]);
 
-	g_hooks[2] = taiHookFunctionImport(&g_sceKernelGetSystemSwVersion_SceSettings_hook, 
-	                                   "SceSettings", 
-	                                   0xEAED1616, // SceModulemgr
-	                                   0x5182E212, 
-	                                   sceKernelGetSystemSwVersion_SceSettings_patched);
-	LOG("sceKernelGetSystemSwVersion hook: %x", g_hooks[2]);
+		g_hooks[2] = taiHookFunctionImport(&g_sceKernelGetSystemSwVersion_SceSettings_hook, 
+		                                   "SceSettings", 
+		                                   0xEAED1616, // SceModulemgr
+		                                   0x5182E212, // sceKernelGetSystemSwVersion
+		                                   sceKernelGetSystemSwVersion_SceSettings_patched);
+		LOG("sceKernelGetSystemSwVersion hook: %x", g_hooks[2]);
+	}
 
 	g_hooks[3] = -1;
 	g_hooks[4] = -1;
 	g_hooks[5] = -1;
-	info.size = sizeof(info);
+
+	sceClibMemset(&info, 0, sizeof(tai_module_info_t));
+	info.size = sizeof(tai_module_info_t);
 	if (taiGetModuleInfo("SceShell", &info) >= 0)
 	{
 		if (config.use_psn_spoofing)
@@ -569,19 +581,68 @@ int module_start(SceSize argc, const void* args)
 			// offsets.
 			switch (info.module_nid)
 			{
-			case 0x0552F692: // CEX 3.60 SceShell
+			case 0x8978D25D: // CEX 3.55 SceShell
 			{
 				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
 				                                   info.modid,
 				                                   0,         // segidx
-				                                   0x363de8,  // offset
+				                                   0x363968,  // offset
 				                                   1,         // thumb
 				                                   update_check_patched);
 
 				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
 				                                   info.modid,
 				                                   0,         // segidx
-				                                   0x37beda,  // offset
+				                                   0x37BA5A,  // offset
+				                                   1,         // thumb
+				                                   game_update_check_patched);
+				
+				g_hooks[5] = taiHookFunctionOffset(&g_passphrase_decrypt_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x324DB0,  // offset
+				                                   1,         // thumb
+				                                   passphrase_decrypt_patched);
+				break;
+			}
+			case 0x9F367BFC: // CEX 3.57 SceShell
+			{
+				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x3637CC,  // offset
+				                                   1,         // thumb
+				                                   update_check_patched);
+				
+				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x37B8BE,  // offset
+				                                   1,         // thumb
+				                                   game_update_check_patched);
+				
+				g_hooks[5] = taiHookFunctionOffset(&g_passphrase_decrypt_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x324C14,  // offset
+				                                   1,         // thumb
+				                                   passphrase_decrypt_patched);
+				break;
+			}
+			case 0x0552F692: // CEX 3.60 SceShell
+			case 0x532155E5: // CEX 3.61 SceShell
+			{
+				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x363DE8,  // offset
+				                                   1,         // thumb
+				                                   update_check_patched);
+
+				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x37BEDA,  // offset
 				                                   1,         // thumb
 				                                   game_update_check_patched);
 
@@ -622,14 +683,14 @@ int module_start(SceSize argc, const void* args)
 				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
 				                                   info.modid,
 				                                   0,         // segidx
-				                                   0x12c882,  // offset
+				                                   0x12C882,  // offset
 				                                   1,         // thumb
 				                                   update_check_patched);
 
 				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
 				                                   info.modid,
 				                                   0,         // segidx
-				                                   0x36df3e,  // offset
+				                                   0x36DF3E,  // offset
 				                                   1,         // thumb
 				                                   game_update_check_patched);
 
@@ -641,6 +702,30 @@ int module_start(SceSize argc, const void* args)
 				                                   passphrase_decrypt_patched);
 				break;
 			}
+			case 0xBB4B0A3E: // CEX 3.63 SceShell
+			{
+				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x363E84,  // offset
+				                                   1,         // thumb
+				                                   update_check_patched);
+
+				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x37BF76,  // offset
+				                                   1,         // thumb
+				                                   game_update_check_patched);
+
+				g_hooks[5] = taiHookFunctionOffset(&g_passphrase_decrypt_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x3252CC,  // offset
+				                                   1,         // thumb
+				                                   passphrase_decrypt_patched);
+				break;
+			}
 			case 0x5549BF1F: // CEX 3.65 SceShell
 			case 0x34B4D82E: // CEX 3.67 SceShell
 			case 0x12DAC0F3: // CEX 3.68 SceShell
@@ -648,13 +733,14 @@ int module_start(SceSize argc, const void* args)
 				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
 				                                   info.modid,
 				                                   0,         // segidx
-				                                   0x36422c,  // offset
+				                                   0x36422C,  // offset
 				                                   1,         // thumb
 				                                   update_check_patched);
+
 				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
 				                                   info.modid,
 				                                   0,         // segidx
-				                                   0x37c31e,  // offset
+				                                   0x37C31E,  // offset
 				                                   1,         // thumb
 				                                   game_update_check_patched);
 
@@ -666,19 +752,98 @@ int module_start(SceSize argc, const void* args)
 				                                   passphrase_decrypt_patched);
 				break;
 			}
+			case 0x587F9CED: // DEX 3.65 SceShell
+			{
+				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x35AC74,  // offset
+				                                   1,         // thumb
+				                                   update_check_patched);
+
+				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x372C76,  // offset
+				                                   1,         // thumb
+				                                   game_update_check_patched);
+
+				g_hooks[5] = taiHookFunctionOffset(&g_passphrase_decrypt_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x31C0BC,  // offset
+				                                   1,         // thumb
+				                                   passphrase_decrypt_patched);
+				break;
+			}
+			case 0xE6A02F2B: // TOOL 3.65 SceShell
+			{
+				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x12C8DA,  // offset
+				                                   1,         // thumb
+				                                   update_check_patched);
+
+				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x36E3AA,  // offset
+				                                   1,         // thumb
+				                                   game_update_check_patched);
+
+				g_hooks[5] = taiHookFunctionOffset(&g_passphrase_decrypt_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x3177F0,  // offset
+				                                   1,         // thumb
+				                                   passphrase_decrypt_patched);
+				break;
+			}
+			case 0x0703C828: // CEX 3.69 SceShell
+        		case 0x2053B5A5: // CEX 3.70 SceShell
+        		case 0xF476E785: // CEX 3.71 SceShell
+        		case 0x939FFBE9: // CEX 3.72 SceShell
+        		case 0x734D476A: // CEX 3.73 SceShell
+        		case 0x51CB6207: // CEX 3.74 SceShell
+			{
+				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x36423C,  // offset
+				                                   1,         // thumb
+				                                   update_check_patched);
+
+				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x37C32E,  // offset
+				                                   1,         // thumb
+				                                   game_update_check_patched);
+
+				g_hooks[5] = taiHookFunctionOffset(&g_passphrase_decrypt_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x325684,  // offset
+				                                   1,         // thumb
+				                                   passphrase_decrypt_patched);
+				
+				break;
+			}
 			default:
 			{
 				LOG("SceShell NID %X not recognized, skipping PSN spoofing patches", info.module_nid);
+				break;
 			}
 			}
 		}
 
 		// add patch to skip id.dat checks (only works if plugin loads before start)
-		g_hooks[6] = taiHookFunctionImport(&g_SceVshBridge_333875AB_SceShell_hook, 
+		g_hooks[6] = taiHookFunctionImport(&g_vshNpDrmIsLooseAccountBind_SceShell_hook, 
 		                                   "SceShell", 
 		                                   0x35C5ACD4, // SceVshBridge
-		                                   0x333875AB, 
-		                                   SceVshBridge_333875AB_SceShell_patched);
+		                                   0x333875AB, // vshNpDrmIsLooseAccountBind
+		                                   vshNpDrmIsLooseAccountBind_SceShell_patched);
 	}
 	else
 	{
@@ -688,8 +853,11 @@ int module_start(SceSize argc, const void* args)
 	return SCE_KERNEL_START_SUCCESS;
 }
 
-int module_stop(SceSize argc, const void* args)
+int module_stop(SceSize args, const void* argp)
 {
+	UNUSED_PARAM(args);
+	UNUSED_PARAM(argp);
+
 	LOG("stopping module");
 
 	// free hooks that didn't fail
@@ -699,7 +867,7 @@ int module_stop(SceSize argc, const void* args)
 	if (g_hooks[3] >= 0) taiHookRelease(g_hooks[3], g_update_check_hook);
 	if (g_hooks[4] >= 0) taiHookRelease(g_hooks[4], g_game_update_check_hook);
 	if (g_hooks[5] >= 0) taiHookRelease(g_hooks[5], g_passphrase_decrypt_hook);
-	if (g_hooks[6] >= 0) taiHookRelease(g_hooks[6], g_SceVshBridge_333875AB_SceShell_hook);
+	if (g_hooks[6] >= 0) taiHookRelease(g_hooks[6], g_vshNpDrmIsLooseAccountBind_SceShell_hook);
 
 	return SCE_KERNEL_STOP_SUCCESS;
 }
