@@ -1,8 +1,8 @@
 /**
  * @brief      Internal functions and defines
  */
-#ifndef HENKAKU_HEADER
-#define HENKAKU_HEADER
+#ifndef __HENKAKU_HEADER__
+#define __HENKAKU_HEADER__
 
 #include <stdint.h>
 
@@ -25,18 +25,19 @@ int taiReloadConfig(void);
 #endif
 
 /** Config */
-typedef struct {
-  uint32_t magic;
-  uint32_t version;
-  uint32_t use_psn_spoofing;
-  uint32_t allow_unsafe_hb;
-  uint32_t use_spoofed_version;
-  uint32_t spoofed_version;
+typedef struct
+{
+	uint32_t magic;
+	uint32_t version;
+	uint32_t use_psn_spoofing;
+	uint32_t allow_unsafe_hb;
+	uint32_t use_spoofed_version;
+	uint32_t spoofed_version;
 } __attribute__((packed)) henkaku_config_t;
 
-#define HENKAKU_CONFIG_MAGIC (0x4C434C4D)
-#define CONFIG_PATH "ur0:tai/henkaku_config.bin"
-#define OLD_CONFIG_PATH "ux0:temp/app_work/MLCL00001/rec/config.bin"
-#define SPOOF_VERSION (0x3700000)
+#define HENKAKU_CONFIG_MAGIC (0x4C434C4D) /* MLCL */
+#define CONFIG_PATH          "ur0:tai/henkaku_config.bin"
+#define OLD_CONFIG_PATH      "ux0:temp/app_work/MLCL00001/rec/config.bin"
+#define SPOOF_VERSION        (0x3740000)
 
-#endif // HENKAKU_HEADER
+#endif // __HENKAKU_HEADER__
