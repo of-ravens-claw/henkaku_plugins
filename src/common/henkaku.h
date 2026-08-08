@@ -4,11 +4,10 @@
 #ifndef __HENKAKU_HEADER__
 #define __HENKAKU_HEADER__
 
-#include <stdint.h>
+#include "config.h"
 
-// TODO: Move to sdk
-int sceClibPrintf(const char *fmt, ...);
-int sceClibSnprintf(char *buf, size_t len, const char *fmt, ...);
+#include <stdbool.h>
+#include <stdint.h>
 
 int henkaku_reload_config(void);
 int taiReloadConfig(void);
@@ -40,6 +39,16 @@ typedef struct
 #define HENKAKU_CONFIG_MAGIC (0x4C434C4D) /* MLCL */
 #define CONFIG_PATH          "ur0:tai/henkaku_config.bin"
 #define OLD_CONFIG_PATH      "ux0:temp/app_work/MLCL00001/rec/config.bin"
-#define SPOOF_VERSION        (0x3740000)
+#define SPOOF_VERSION        (0x03740000)
+
+#define henkaku_default_config(config)                       \
+do {                                                         \
+	(config).magic               = HENKAKU_CONFIG_MAGIC; \
+	(config).version             = HENKAKU_RELEASE;      \
+	(config).use_psn_spoofing    = true;                 \
+	(config).allow_unsafe_hb     = false;                \
+	(config).use_spoofed_version = true;                 \
+	(config).spoofed_version     = SPOOF_VERSION;        \
+} while (false)
 
 #endif // __HENKAKU_HEADER__
