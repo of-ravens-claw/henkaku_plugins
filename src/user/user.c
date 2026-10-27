@@ -17,10 +17,16 @@
 #define SCE_ERROR_ERRNO_EEXIST ((int)0x80010011)
 #define SCE_UID_INVALID_UID    ((SceUID)-1)
 
-extern unsigned char _binary_system_settings_xml_start;
-extern unsigned char _binary_system_settings_xml_size;
+extern unsigned char _binary_system_settings_330_xml_start;
+extern unsigned char _binary_system_settings_330_xml_size;
+extern unsigned char _binary_system_settings_350_xml_start;
+extern unsigned char _binary_system_settings_350_xml_size;
+
 extern unsigned char _binary_henkaku_settings_xml_start;
 extern unsigned char _binary_henkaku_settings_xml_size;
+
+static void* _binary_system_settings_xml_start = NULL;
+static int   _binary_system_settings_xml_size  = 0;
 
 static henkaku_config_t config;
 
@@ -409,8 +415,11 @@ static int ScePafMisc_19FE55A8_SceSettings_patched(int a1, char* xml_buf, int xm
 {
 	if ((82 + 22) < xml_size && sceClibStrncmp(xml_buf + 82, "system_settings_plugin", 22) == 0)
 	{
-		xml_buf  = (void*)&_binary_system_settings_xml_start;
-		xml_size = (int)&_binary_system_settings_xml_size;
+		if (_binary_system_settings_xml_start != NULL)
+		{
+			xml_buf  = _binary_system_settings_xml_start;
+			xml_size = _binary_system_settings_xml_size;
+		}
 	}
 	else if ((79 + 19) < xml_size && sceClibStrncmp(xml_buf + 79, "idu_settings_plugin", 19) == 0)
 	{
@@ -578,6 +587,7 @@ int module_start(SceSize args, const void* argp)
 	UNUSED_PARAM(args);
 	UNUSED_PARAM(argp);
 
+	// This fills `g_hooks` with `SCE_UID_INVALID_UID`.
 	sceClibMemset(g_hooks, 0xFF, sizeof(g_hooks));
 
 	tai_module_info_t info;
@@ -589,6 +599,28 @@ int module_start(SceSize args, const void* argp)
 	if (taiGetModuleInfo("SceSettings", &info) >= 0)
 	{
 		LOG("SceSettings dbg_fingerprint: 0x%08X\n", info.module_nid);
+
+		// This is needed because some options were added in later firmwares.
+		// - 'Theme & Background' was added in 3.30.
+		// - 'Accessibility' was added in 3.50.
+		// An alternative would be to dynamically find and patch the 'System Update' entry.
+		SceKernelSystemSwVersion fwinfo;
+		sceClibMemset(&fwinfo, 0, sizeof(SceKernelSystemSwVersion));
+		fwinfo.size = sizeof(SceKernelSystemSwVersion);
+		_vshSblGetSystemSwVersion(&fwinfo);
+		LOG("System firmware version: 0x%08X\n", fwinfo.version);
+		if (fwinfo.version >= 0x03500000)
+		{
+			// Valid for 3.50 - 3.74
+			_binary_system_settings_xml_start = (void*)&_binary_system_settings_350_xml_start;
+			_binary_system_settings_xml_size  = (int)&_binary_system_settings_350_xml_size;
+		}
+		else if (fwinfo.version >= 0x03300000)
+		{
+			// Valid for 3.30 - 3.36
+			_binary_system_settings_xml_start = (void*)&_binary_system_settings_330_xml_start;
+			_binary_system_settings_xml_size  = (int)&_binary_system_settings_330_xml_size;
+		}
 
 		g_hooks[0] = taiHookFunctionImport(&g_sceKernelLoadStartModule_SceSettings_hook, 
 		                                   "SceSettings", 
@@ -619,6 +651,9 @@ int module_start(SceSize args, const void* argp)
 		{
 		// All CEX (and CFT) SceSettings builds use `sceKernelGetSystemSwVersion` to get the version string.
 		// Therefore, we will simply abort if we encounter a CEX SceShell NID.
+		case 0x0D75AC50: // 3.30 CEX SceSettings
+		case 0xC2F19B5D: // 3.35 CEX SceSettings
+		case 0xFFD7500F: // 3.36 CEX SceSettings
 		case 0x11C29BED: // 3.50 CEX SceSettings
 		case 0x4D6927BC: // 3.51 CEX SceSettings
 		case 0xF8501C94: // 3.52 CEX SceSettings
@@ -675,6 +710,78 @@ int module_start(SceSize args, const void* argp)
 			// offsets.
 			switch (info.module_nid)
 			{
+			case 0x2734F75F: // 3.30 CEX SceShell
+			{
+				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x33E0C2,  // offset
+				                                   1,         // thumb
+				                                   update_check_patched);
+
+				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x355DAE,  // offset
+				                                   1,         // thumb
+				                                   game_update_check_patched);
+				
+				g_hooks[5] = taiHookFunctionOffset(&g_passphrase_decrypt_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x300470,  // offset
+				                                   1,         // thumb
+				                                   passphrase_decrypt_patched);
+				break;
+			}
+			case 0xB335EA6B: // 3.35 CEX SceShell
+			{
+				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x33EC2A,  // offset
+				                                   1,         // thumb
+				                                   update_check_patched);
+
+				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x356AB6,  // offset
+				                                   1,         // thumb
+				                                   game_update_check_patched);
+				
+				g_hooks[5] = taiHookFunctionOffset(&g_passphrase_decrypt_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x300FD8,  // offset
+				                                   1,         // thumb
+				                                   passphrase_decrypt_patched);
+				break;
+			}
+			case 0x1AF19E7A: // 3.36 CEX SceShell
+			{
+				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x33EE62,  // offset
+				                                   1,         // thumb
+				                                   update_check_patched);
+
+				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x356CEE,  // offset
+				                                   1,         // thumb
+				                                   game_update_check_patched);
+				
+				g_hooks[5] = taiHookFunctionOffset(&g_passphrase_decrypt_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x301210,  // offset
+				                                   1,         // thumb
+				                                   passphrase_decrypt_patched);
+				break;
+			}
 			case 0xE1FF69B5: // 3.50 CEX SceShell
 			{
 				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
@@ -968,11 +1075,11 @@ int module_start(SceSize args, const void* argp)
 				break;
 			}
 			case 0x0703C828: // 3.69 CEX SceShell
-        		case 0x2053B5A5: // 3.70 CEX SceShell
-        		case 0xF476E785: // 3.71 CEX SceShell
-        		case 0x939FFBE9: // 3.72 CEX SceShell
-        		case 0x734D476A: // 3.73 CEX SceShell
-        		case 0x51CB6207: // 3.74 CEX SceShell
+        	case 0x2053B5A5: // 3.70 CEX SceShell
+        	case 0xF476E785: // 3.71 CEX SceShell
+        	case 0x939FFBE9: // 3.72 CEX SceShell
+        	case 0x734D476A: // 3.73 CEX SceShell
+        	case 0x51CB6207: // 3.74 CEX SceShell
 			{
 				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
 				                                   info.modid,
