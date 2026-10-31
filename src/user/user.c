@@ -17,6 +17,8 @@
 #define SCE_ERROR_ERRNO_EEXIST ((int)0x80010011)
 #define SCE_UID_INVALID_UID    ((SceUID)-1)
 
+extern unsigned char _binary_system_settings_310_xml_start;
+extern unsigned char _binary_system_settings_310_xml_size;
 extern unsigned char _binary_system_settings_330_xml_start;
 extern unsigned char _binary_system_settings_330_xml_size;
 extern unsigned char _binary_system_settings_350_xml_start;
@@ -604,6 +606,7 @@ int module_start(SceSize args, const void* argp)
 		// - 'Theme & Background' was added in 3.30.
 		// - 'Accessibility' was added in 3.50.
 		// An alternative would be to dynamically find and patch the 'System Update' entry.
+		// TODO: We should dynamically remove entries instead of shipping duplicate XMLs...
 		SceKernelSystemSwVersion fwinfo;
 		sceClibMemset(&fwinfo, 0, sizeof(SceKernelSystemSwVersion));
 		fwinfo.size = sizeof(SceKernelSystemSwVersion);
@@ -620,6 +623,12 @@ int module_start(SceSize args, const void* argp)
 			// Valid for 3.30 - 3.36
 			_binary_system_settings_xml_start = (void*)&_binary_system_settings_330_xml_start;
 			_binary_system_settings_xml_size  = (int)&_binary_system_settings_330_xml_size;
+		}
+		else if (fwinfo.version >= 0x03100000)
+		{
+			// Valid for 3.10 - 3.20 (more?)
+			_binary_system_settings_xml_start = (void*)&_binary_system_settings_310_xml_start;
+			_binary_system_settings_xml_size  = (int)&_binary_system_settings_310_xml_size;
 		}
 
 		g_hooks[0] = taiHookFunctionImport(&g_sceKernelLoadStartModule_SceSettings_hook, 
@@ -651,6 +660,7 @@ int module_start(SceSize args, const void* argp)
 		{
 		// All CEX (and CFT) SceSettings builds use `sceKernelGetSystemSwVersion` to get the version string.
 		// Therefore, we will simply abort if we encounter a CEX SceShell NID.
+		case 0x631696DD: // 3.18 CEX SceSettings
 		case 0x0D75AC50: // 3.30 CEX SceSettings
 		case 0xC2F19B5D: // 3.35 CEX SceSettings
 		case 0xFFD7500F: // 3.36 CEX SceSettings
@@ -710,6 +720,30 @@ int module_start(SceSize args, const void* argp)
 			// offsets.
 			switch (info.module_nid)
 			{
+			case 0xF70EE288: // 3.18 CEX SceShell
+			{
+				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x2FF406,  // offset
+				                                   1,         // thumb
+				                                   update_check_patched);
+
+				g_hooks[4] = taiHookFunctionOffset(&g_game_update_check_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x3168E6,  // offset
+				                                   1,         // thumb
+				                                   game_update_check_patched);
+				
+				g_hooks[5] = taiHookFunctionOffset(&g_passphrase_decrypt_hook,
+				                                   info.modid,
+				                                   0,         // segidx
+				                                   0x2C3138,  // offset
+				                                   1,         // thumb
+				                                   passphrase_decrypt_patched);
+				break;
+			}
 			case 0x2734F75F: // 3.30 CEX SceShell
 			{
 				g_hooks[3] = taiHookFunctionOffset(&g_update_check_hook,
